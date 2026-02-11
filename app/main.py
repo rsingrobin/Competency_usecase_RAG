@@ -177,47 +177,65 @@ def learning_roadmap(employee_id: int = Depends(get_current_employee)):
 
 @app.get("/advisor")
 def advisor(question: str, employee_id: int = Depends(get_current_employee)):
-    roadmap_answer = build_learning_sequence(question)
 
+    # Step 1: roadmap questions
+    roadmap_answer = build_learning_sequence(question)
     if roadmap_answer:
         return {"answer": roadmap_answer}
-        # retrieve DB context
+
+    session = SessionLocal()
+
+    try:
+        # Step 2: direct DB search
+        rows = session.execute(text("""
+            SELECT DISTINCT competency_name,
+                            proficiency_level_name
+            FROM competency_catalog
+            WHERE competency_name ILIKE '%' || :q || '%'
+            LIMIT 5
+        """), {"q": question}).fetchall()
+
+        if rows:
+            results = [
+                f"{r._mapping['competency_name']} "
+                f"(Level: {r._mapping['proficiency_level_name']})"
+                for r in rows
+            ]
+
+            return {
+                "answer": "Matching competencies:\n" +
+                          "\n".join(results)
+            }
+
+    finally:
+        session.close()
+
+    # Step 3: fallback to RAG
     context = retrieve_context(question)
 
-    if not context:
-        return {
-            "answer": "No matching competency found in database."
-        }
+    if context:
+        answer = generate_answer(question, context)
+        return {"answer": answer}
 
-   # top matched competency
-    comp = context[0]
+    return {"answer": "No matching competency found in database."}
 
-    competency = comp.competency_name
-    level = comp.proficiency_level_name
-
-    # Step 2: build learning sequence
-    roadmap_answer = build_learning_sequence_from_name(
-        competency,
-        level,
-        employee_id,
-    )
-
-    if roadmap_answer:
-        return {"answer": roadmap_answer}
-
-    # fallback answer using DB context only
-    answer = generate_answer(question, context)
-
-    return {"answer": answer}
 
 
 def build_learning_sequence(question: str):
     session = SessionLocal()
 
     try:
-        # Extract competency name
-        comp_match = re.search(r'complete\s+"?(.+?)"?\s*\(Level', question, re.I)
-        level_match = re.search(r'Level:\s*(E\d+)', question, re.I)
+        comp_match = re.search(
+            r'complete\s+(.+?)\s*\(Level',
+            question,
+            re.I,
+        )
+
+        level_match = re.search(
+            r'Level:\s*(E\d+)',
+            question,
+            re.I,
+        )
 
         if not comp_match or not level_match:
             return None
@@ -226,40 +244,36 @@ def build_learning_sequence(question: str):
         target_level = level_match.group(1).upper()
 
         rows = session.execute(text("""
-            SELECT DISTINCT
-                competency_name,
-                proficiency_level_name
+            SELECT DISTINCT proficiency_level_name
             FROM competency_catalog
-            WHERE competency_name = :name
+            WHERE LOWER(competency_name) = LOWER(:name)
         """), {"name": competency}).fetchall()
 
         if not rows:
-            return None
+            return f"No competency named '{competency}' found."
 
-        # Sort E0, E1, E2...
         levels = sorted(
             {r._mapping["proficiency_level_name"] for r in rows},
             key=lambda x: int(x[1:])
         )
 
-        path = []
+        sequence = []
         for lvl in levels:
-            path.append(
-                f"{competency} (Level: {lvl})"
-            )
+            sequence.append(lvl)
             if lvl == target_level:
                 break
 
-        sequence = " → ".join(levels)
+        roadmap_lines = [
+            f"{competency} (Level: {lvl})"
+            for lvl in sequence
+        ]
 
-        answer = (
+        return (
             f"Learning roadmap for {competency}:\n\n"
-            f"{sequence}\n\n"
-            f"To reach Level {target_level}, you must complete:\n"
-            + "\n".join(path)
+            f"{' → '.join(sequence)}\n\n"
+            f"To reach Level {target_level}, complete:\n"
+            + "\n".join(roadmap_lines)
         )
-
-        return answer
 
     finally:
         session.close()
@@ -275,7 +289,7 @@ def build_learning_sequence_from_name(
         rows = session.execute(text("""
             SELECT DISTINCT proficiency_level_name
             FROM competency_catalog
-            WHERE competency_name = :name
+            WHERE LOWER(competency_name) = LOWER(:name)
         """), {"name": competency}).fetchall()
 
         if not rows:
