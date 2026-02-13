@@ -1,5 +1,16 @@
+import sys
+import os
+
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(ROOT_DIR)
+
 import streamlit as st
 import requests
+import sys, os
+sys.path.append(os.path.abspath(".."))
+from app.advisor_eval import evaluate_answer , compute_answer_accuracy
+
+ 
 
 # Backend API URL
 API = "http://localhost:8001"   # change if using 8000
@@ -19,8 +30,8 @@ if "token" not in st.session_state:
 def login_screen():
     st.title("Employee Login")
 
-    email = st.text_input("Email")
-    password = st.text_input("Password", type="password")
+    email = st.text_input("Email", key="login_email")
+    password = st.text_input("Password", type="password", key="login_pwd")
 
     if st.button("Login"):
         try:
@@ -50,7 +61,8 @@ def advisor_chat(headers):
     st.subheader("AI Competency Advisor")
 
     question = st.text_input(
-        "Ask about competencies or learning path"
+    "Ask about competencies or learning path",
+    key="advisor_question"
     )
 
     if st.button("Ask Advisor"):
@@ -65,7 +77,12 @@ def advisor_chat(headers):
             resp.raise_for_status()
             data = resp.json()
 
-            st.write(data["answer"])
+            answer = data["answer"]
+            st.write(answer)
+
+            accuracy = compute_answer_accuracy(question, answer)
+
+            st.write(f"Answer Accuracy: {accuracy*100:.0f}%")
 
         except Exception as e:
             st.error(str(e))
@@ -142,7 +159,7 @@ def dashboard():
     # ---------- Advisor ----------
     st.divider()
     advisor_chat(headers)
-
+    # ---------- Advisor Accuracy ----------
     # ---------- Logout ----------
     st.divider()
     if st.button("Logout"):

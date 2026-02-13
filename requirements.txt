@@ -9,3 +9,4 @@ passlib[bcrypt]
 python-jose
 streamlit
 python-multipart
+ollama

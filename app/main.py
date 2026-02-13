@@ -12,6 +12,8 @@ import re
 from app.competency_service import get_next_competency
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi import Depends
+from app.advisor_eval import evaluate_answer
+
 
 
 security = HTTPBearer()
@@ -189,6 +191,7 @@ def advisor(question: str, employee_id: int = Depends(get_current_employee)):
         # Step 2: direct DB search
         rows = session.execute(text("""
             SELECT DISTINCT competency_name,
+                            competency_id,
                             proficiency_level_name
             FROM competency_catalog
             WHERE competency_name ILIKE '%' || :q || '%'
@@ -197,6 +200,7 @@ def advisor(question: str, employee_id: int = Depends(get_current_employee)):
 
         if rows:
             results = [
+                f"{r._mapping['competency_id']} "
                 f"{r._mapping['competency_name']} "
                 f"(Level: {r._mapping['proficiency_level_name']})"
                 for r in rows
@@ -214,10 +218,23 @@ def advisor(question: str, employee_id: int = Depends(get_current_employee)):
     context = retrieve_context(question)
 
     if context:
+        comp = context[0]
         answer = generate_answer(question, context)
-        return {"answer": answer}
+        acc = evaluate_answer(
+            answer,
+            comp.competency_name,
+            comp.proficiency_level_name
+    )
+        return {
+         "answer": answer,
+        "answer_accuracy": acc
+        }
 
-    return {"answer": "No matching competency found in database."}
+    return {
+    "answer": "No matching competency found in database.",
+    "retrieval_accuracy": 0,
+    "answer_accuracy": 0
+    }
 
 
 
@@ -311,11 +328,13 @@ def build_learning_sequence_from_name(
             for lvl in sequence
         ]
 
+        details = ",\n".join(roadmap_lines)
+
         answer = (
             f"Learning roadmap for {competency}:\n\n"
             f"{' → '.join(sequence)}\n\n"
-            f"To reach Level {target_level}, complete:\n"
-            + "\n".join(roadmap_lines)
+            f"To reach Level {target_level}, complete:\n\n"
+            f"{details}"
         )
 
         return answer
